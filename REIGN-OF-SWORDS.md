@@ -28,7 +28,7 @@ No game files are included. You need your own copy of each game's `.ipa`.
 
   | Game | Version | Bundle id (shown at start) |
   | --- | --- | --- |
-  | Reign of Swords | 1.0 and 1.2 (several IPAs of each) | `CCU8RRT36N.punch-entertainment.com` |
+  | Reign of Swords | 1.2 | `CCU8RRT36N.punch-entertainment.com` |
   | Reign of Swords Episode II | 1.0.11 | `CCU8RRT36N.punch-entertainment.ros-ep2` |
 
 ## 1. Get touchHLE (the fork)
