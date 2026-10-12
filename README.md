@@ -6,9 +6,10 @@
 >
 > What the fork changes (see the branch's commits):
 > - the main nib's top-level objects stay alive for the app's lifetime, as on iPhone OS;
-> - a view that overrides `drawRect:` is drawn once when created, and `setNeedsDisplayInRect:` exists;
+> - a view that overrides `drawRect:` is drawn once when created;
 > - pixels an app writes straight into a layer's bitmap (`CGBitmapContextGetData`) are converted from iPhone OS's
->   layout (BGRA, rows top to bottom).
+>   layout (BGRA, rows top to bottom);
+> - `setNeedsDisplayInRect:` redraws only that rect, keeping the rest of the view, as on iPhone OS.
 >
 > **How to play: see [REIGN-OF-SWORDS.md](REIGN-OF-SWORDS.md)**, a step-by-step guide (download, adding the game,
 > controls, saves, known problems, building it yourself).

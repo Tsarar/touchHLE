@@ -95,7 +95,7 @@ Useful options (put them before the file name):
 
 | Option | What it does |
 | --- | --- |
-| `--fullscreen` | full screen instead of a window |
+| `--fullscreen` | full screen instead of a window, the picture scaled to fit (quit with Alt+F4) |
 | `--scale-hack=2` | renders at 2× the internal resolution (sharper; `3` or `4` for large screens) |
 | `--landscape-left`, `--landscape-right` | rotate the screen if a game ever starts sideways |
 | `--print-fps` | prints the frame rate to the console once a second |
@@ -157,6 +157,9 @@ Check that the file ends in `.ipa` and sits directly in `touchHLE_apps`, not in 
 Run it from a command prompt (step 3) to see the error. A missing `touchHLE_dylibs` or `touchHLE_fonts` folder
 next to the `.exe` is the usual cause: unpack the whole zip.
 
+**After the title screen only part of the picture shows, shifted to a corner, the rest black.**
+That's an older build of this fork. Download the latest release.
+
 **Reporting a problem.** Run the game from a command prompt, reproduce the problem, and attach `touchHLE_log.txt`
 (written next to `touchHLE.exe`) to an issue on this fork. Don't report problems that only happen in this fork to the
 official touchHLE project.
@@ -216,11 +219,14 @@ Each fix is one commit on the `reign-of-swords` branch:
    `MainWindow.nib` holds a stray `iCanvas` view; touchHLE released it right after launch, and the game crashed in
    its `-dealloc`.
 2. **A view that overrides `drawRect:` is drawn once when it's created**, as on iPhone OS. The game creates its
-   renderer in `drawRect:` before its render timer first fires. `setNeedsDisplayInRect:` is also added (it redraws
-   the whole view).
+   renderer in `drawRect:` before its render timer first fires.
 3. **Pixels written straight into a layer's bitmap are converted.** The game copies each frame into the memory it
    gets from `CGBitmapContextGetData`, in iPhone OS's layout (BGRA, rows top to bottom); touchHLE keeps layers as
-   RGBA with rows bottom to top, so the picture came out upside down with red and blue swapped.
+   RGBA with rows bottom to top, so the picture came out upside down with red and blue swapped. The buffer is put
+   into iPhone OS's layout when the app takes the pointer and back when the drawing pass ends.
+4. **Only the dirty rect is redrawn.** `setNeedsDisplayInRect:` records the rect, and a redraw clears and passes to
+   `drawRect:` only that part; the rest of the view keeps what was drawn before, as on iPhone OS. After the title
+   screen the game redraws only what changed; before this fix the rest of the screen went black.
 
 These changes were made with the help of an AI assistant. touchHLE's contribution rules don't allow that, so they
 are not offered to the official project. If you maintain touchHLE and want to fix the same problems, the
