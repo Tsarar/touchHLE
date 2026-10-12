@@ -1,3 +1,18 @@
+> **This is an unofficial fork** with fixes that let *Reign of Swords* and *Reign of Swords Episode II* (Punch
+> Entertainment, 2008–2009) start and run. It is not affiliated with the touchHLE project. The changes were made
+> with the help of an AI assistant, which touchHLE's contribution rules don't allow, so they are **not** offered
+> upstream; they live only here, on the `reign-of-swords` branch. No game files are included: you need your own
+> copy of the game's IPA.
+>
+> What the fork changes (see the branch's commits):
+> - the main nib's top-level objects stay alive for the app's lifetime, as on iPhone OS;
+> - a view that overrides `drawRect:` is drawn once when created, and `setNeedsDisplayInRect:` exists;
+> - pixels an app writes straight into a layer's bitmap (`CGBitmapContextGetData`) are converted from iPhone OS's
+>   layout (BGRA, rows top to bottom).
+>
+> To play: download the Windows build from this fork's Releases (or build it as described below), put the game's
+> `.ipa` in `touchHLE_apps`, and run `touchHLE.exe`. Known gaps: the opening Punch logo video doesn't play.
+
 # touchHLE: high-level emulator for early iOS apps
 
 **touchHLE** is a high-level emulator for early iOS apps. It runs on modern desktop operating systems and Android, and is written in Rust.
