@@ -142,7 +142,29 @@ fn init_common(env: &mut Environment, this: id) -> id {
 
     env.framework_state.uikit.ui_view.views.push(this);
 
+    // A new view with custom drawing gets drawn once without anyone asking:
+    // on iPhone OS, drawRect: runs when the view is first displayed. Some apps
+    // set themselves up there (Reign of Swords creates its OpenGL state in
+    // drawRect: before its render timer first fires).
+    if view_overrides_drawing(env, this) {
+        () = msg![env; layer setNeedsDisplay];
+    }
+
     this
+}
+
+/// Whether the view's class overrides `drawRect:` or `drawLayer:inContext:`,
+/// i.e. whether its layer needs a bitmap at all.
+fn view_overrides_drawing(env: &mut Environment, this: id) -> bool {
+    let this_class = ObjC::read_isa(this, &env.mem);
+    let ui_view_class = env.objc.get_known_class("UIView", &mut env.mem);
+    let draw_layer_sel = env.objc.lookup_selector("drawLayer:inContext:").unwrap();
+    let draw_rect_sel = env.objc.lookup_selector("drawRect:").unwrap();
+    env.objc
+        .class_overrides_method_of_superclass(this_class, draw_rect_sel, ui_view_class)
+        || env
+            .objc
+            .class_overrides_method_of_superclass(this_class, draw_layer_sel, ui_view_class)
 }
 
 pub const CLASSES: ClassExports = objc_classes! {
@@ -689,7 +711,10 @@ pub const CLASSES: ClassExports = objc_classes! {
     msg![env; layer setBackgroundColor:color]
 }
 
-// TODO: support setNeedsDisplayInRect:
+// Redrawing only part of a view isn't supported: the whole view is redrawn.
+- (())setNeedsDisplayInRect:(CGRect)_rect {
+    () = msg![env; this setNeedsDisplay];
+}
 - (())setNeedsDisplay {
     // UIView has a method called drawRect: that subclasses override if they
     // need custom drawing. touchHLE's UIView (a CALayerDelegate) provides
@@ -699,20 +724,7 @@ pub const CLASSES: ClassExports = objc_classes! {
     // To avoid wasting space and time on unnecessary bitmaps and drawing,
     // let's optimize here by only marking the layer as needing display if
     // the UIView's subclass overrides drawRect: or drawLayer:inContext:.
-    let this_class = ObjC::read_isa(this, &env.mem);
-
-    let ui_view_class = env.objc.get_known_class("UIView", &mut env.mem);
-
-    let draw_layer_sel = env.objc.lookup_selector("drawLayer:inContext:").unwrap();
-    let draw_rect_sel = env.objc.lookup_selector("drawRect:").unwrap();
-
-    if env
-        .objc
-        .class_overrides_method_of_superclass(this_class, draw_rect_sel, ui_view_class)
-        || env
-            .objc
-            .class_overrides_method_of_superclass(this_class, draw_layer_sel, ui_view_class)
-    {
+    if view_overrides_drawing(env, this) {
         let layer = env.objc.borrow::<UIViewHostObject>(this).layer;
         msg![env; layer setNeedsDisplay]
     }
