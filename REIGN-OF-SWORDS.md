@@ -225,7 +225,8 @@ Each fix is one commit on the `reign-of-swords` branch:
    RGBA with rows bottom to top, so the picture came out upside down with red and blue swapped. The buffer is put
    into iPhone OS's layout when the app takes the pointer and back when the drawing pass ends.
 4. **Only the dirty rect is redrawn.** `setNeedsDisplayInRect:` records the rect, and a redraw clears and passes to
-   `drawRect:` only that part; the rest of the view keeps what was drawn before, as on iPhone OS. After the title
+   `drawRect:` only that part, rounded out to whole pixels and kept inside the view; the rest of the view keeps what was
+   drawn before, as on iPhone OS. After the title
    screen the game redraws only what changed; before this fix the rest of the screen went black.
 
 These changes were made with the help of an AI assistant. touchHLE's contribution rules don't allow that, so they

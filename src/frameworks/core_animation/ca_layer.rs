@@ -508,7 +508,19 @@ pub const CLASSES: ClassExports = objc_classes! {
     // the backing store keeps what was drawn before, as on iPhone OS. A new
     // backing store is drawn whole.
     let whole = CGRect { origin, size };
-    let drawing_rect = if need_new_context { whole } else { dirty_rect.unwrap_or(whole) };
+    let drawing_rect = match dirty_rect {
+        Some(dirty) if !need_new_context => {
+            // As on iPhone OS, the rect is rounded out to whole pixels and kept
+            // inside the layer: apps size their drawing by it, and one that
+            // copies pixels into the backing store by hand would otherwise
+            // write past its end.
+            match clip_rect(integral_rect(dirty), whole) {
+                Some(rect) => rect,
+                None => return, // nothing of the layer to redraw
+            }
+        }
+        _ => whole,
+    };
     env.objc.borrow_mut::<CALayerHostObject>(this).drawing_rect = drawing_rect;
 
     CGContextTranslateCTM(env, cg_context, -origin.x, -origin.y);
@@ -762,6 +774,39 @@ fn union_rect(a: CGRect, b: CGRect) -> CGRect {
             height: max_y - min_y,
         },
     }
+}
+
+/// The smallest rect with whole-number edges containing `rect`.
+fn integral_rect(rect: CGRect) -> CGRect {
+    let min_x = rect.origin.x.floor();
+    let min_y = rect.origin.y.floor();
+    let max_x = (rect.origin.x + rect.size.width).ceil();
+    let max_y = (rect.origin.y + rect.size.height).ceil();
+    CGRect {
+        origin: CGPoint { x: min_x, y: min_y },
+        size: CGSize {
+            width: max_x - min_x,
+            height: max_y - min_y,
+        },
+    }
+}
+
+/// The part of `rect` inside `bounds`, or `None` if they don't overlap.
+fn clip_rect(rect: CGRect, bounds: CGRect) -> Option<CGRect> {
+    let min_x = rect.origin.x.max(bounds.origin.x);
+    let min_y = rect.origin.y.max(bounds.origin.y);
+    let max_x = (rect.origin.x + rect.size.width).min(bounds.origin.x + bounds.size.width);
+    let max_y = (rect.origin.y + rect.size.height).min(bounds.origin.y + bounds.size.height);
+    if max_x <= min_x || max_y <= min_y {
+        return None;
+    }
+    Some(CGRect {
+        origin: CGPoint { x: min_x, y: min_y },
+        size: CGSize {
+            width: max_x - min_x,
+            height: max_y - min_y,
+        },
+    })
 }
 
 /// The part of the layer being redrawn, for `UIView`'s `drawLayer:inContext:`
