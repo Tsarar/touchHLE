@@ -10,8 +10,8 @@
 > - pixels an app writes straight into a layer's bitmap (`CGBitmapContextGetData`) are converted from iPhone OS's
 >   layout (BGRA, rows top to bottom).
 >
-> To play: download the Windows build from this fork's Releases (or build it as described below), put the game's
-> `.ipa` in `touchHLE_apps`, and run `touchHLE.exe`. Known gaps: the opening Punch logo video doesn't play.
+> **How to play: see [REIGN-OF-SWORDS.md](REIGN-OF-SWORDS.md)**, a step-by-step guide (download, adding the game,
+> controls, saves, known problems, building it yourself).
 
 # touchHLE: high-level emulator for early iOS apps
 
