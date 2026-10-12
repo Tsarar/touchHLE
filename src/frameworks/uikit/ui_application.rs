@@ -301,8 +301,14 @@ pub(super) fn UIApplicationMain(
             if res != nil {
                 let nib: id = msg_class![env; UINib nibWithNibName:ns_main_nib_filename bundle:nil];
                 release(env, ns_main_nib_filename);
-                let _: id = msg![env; nib instantiateWithOwner:ui_application
-                                               options:nil];
+                let top_level_objects: id = msg![env; nib instantiateWithOwner:ui_application
+                                                                options:nil];
+                // iPhone OS keeps the main nib's top-level objects alive for
+                // the lifetime of the app, even ones nothing else references.
+                // Some apps rely on this: Reign of Swords' MainWindow.nib has
+                // a stray top-level view of a custom class whose -dealloc
+                // crashes if it was never set up via -initWithFrame:.
+                retain(env, top_level_objects);
             } else {
                 log!(
                     "Warning: couldn't load main nib file {:?}",
