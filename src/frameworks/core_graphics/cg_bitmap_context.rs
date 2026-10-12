@@ -37,6 +37,9 @@ pub(super) struct CGBitmapContextData {
     bytes_per_row: GuestUSize,
     color_space: &'static str,
     alpha_info: CGImageAlphaInfo,
+    /// Set when the app takes the raw pixel pointer (`CGBitmapContextGetData`).
+    /// See [flip_rows_if_raw_access].
+    raw_data_accessed: bool,
 }
 
 pub fn CGBitmapContextCreate(
@@ -83,6 +86,7 @@ pub fn CGBitmapContextCreate(
             bytes_per_row,
             color_space,
             alpha_info: bitmap_info & kCGBitmapAlphaInfoMask,
+            raw_data_accessed: false,
         }),
         // TODO: is this the correct default?
         rgb_fill_color: (0.0, 0.0, 0.0, 0.0),
@@ -101,9 +105,46 @@ pub fn CGBitmapContextCreate(
 }
 
 fn CGBitmapContextGetData(env: &mut Environment, context: CGContextRef) -> MutVoidPtr {
-    let host_obj = env.objc.borrow::<CGContextHostObject>(context);
-    let CGContextSubclass::CGBitmapContext(bitmap_data) = host_obj.subclass;
+    let host_obj = env.objc.borrow_mut::<CGContextHostObject>(context);
+    let CGContextSubclass::CGBitmapContext(ref mut bitmap_data) = host_obj.subclass;
+    bitmap_data.raw_data_accessed = true;
     bitmap_data.data
+}
+
+/// Forget whether the app took the raw pixel pointer (before drawing a layer).
+pub fn reset_raw_access(env: &mut Environment, context: CGContextRef) {
+    let host_obj = env.objc.borrow_mut::<CGContextHostObject>(context);
+    let CGContextSubclass::CGBitmapContext(ref mut bitmap_data) = host_obj.subclass;
+    bitmap_data.raw_data_accessed = false;
+}
+
+/// A layer's backing context here is RGBA with its rows bottom-to-top (the
+/// compositor draws it with flipped UVs, and drawing through CG compensates for
+/// that). On iPhone OS a layer's backing store is the device's native BGRA, with
+/// its rows top-to-bottom. An app that writes pixels straight into the memory
+/// from `CGBitmapContextGetData` (Reign of Swords copies its whole frame that way
+/// in drawRect:) writes that layout, and here it comes out upside down with red
+/// and blue swapped. After such a drawing pass, convert the pixels into the
+/// layout the compositor expects.
+pub fn convert_pixels_if_raw_access(env: &mut Environment, context: CGContextRef) {
+    let host_obj = env.objc.borrow_mut::<CGContextHostObject>(context);
+    let CGContextSubclass::CGBitmapContext(ref mut bitmap_data) = host_obj.subclass;
+    if !std::mem::take(&mut bitmap_data.raw_data_accessed) {
+        return;
+    }
+    let data = *bitmap_data;
+    let row = data.bytes_per_row as usize;
+    let pixels = get_pixels(&data, &mut env.mem);
+    let rows = pixels.len() / row;
+    for y in 0..rows / 2 {
+        let (top, bottom) = pixels.split_at_mut((rows - 1 - y) * row);
+        top[y * row..(y + 1) * row].swap_with_slice(&mut bottom[..row]);
+    }
+    if bytes_per_pixel(&data) == 4 {
+        for pixel in pixels.chunks_exact_mut(4) {
+            pixel.swap(0, 2); // BGRA -> RGBA
+        }
+    }
 }
 
 pub fn CGBitmapContextGetWidth(env: &mut Environment, context: CGContextRef) -> GuestUSize {

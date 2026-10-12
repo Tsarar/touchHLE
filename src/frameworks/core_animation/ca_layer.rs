@@ -484,7 +484,9 @@ pub const CLASSES: ClassExports = objc_classes! {
     CGContextTranslateCTM(env, cg_context, -origin.x, -origin.y);
     // TODO: move clearing to UIKit (clearsContextBeforeDrawing)?
     CGContextClearRect(env, cg_context, CGRect { origin, size });
+    crate::frameworks::core_graphics::cg_bitmap_context::reset_raw_access(env, cg_context);
     () = msg![env; delegate drawLayer:this inContext:cg_context];
+    crate::frameworks::core_graphics::cg_bitmap_context::convert_pixels_if_raw_access(env, cg_context);
     CGContextTranslateCTM(env, cg_context, origin.x, origin.y);
 }
 
