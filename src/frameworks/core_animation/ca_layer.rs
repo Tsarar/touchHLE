@@ -50,6 +50,11 @@ pub(super) struct CALayerHostObject {
     pub(super) background_color: Option<CGColorHostObject>,
     pub(super) corner_radius: CGFloat,
     pub(super) needs_display: bool,
+    /// The part of the layer to redraw (`setNeedsDisplayInRect:`), in its
+    /// bounds' co-ordinates; `None` means all of it.
+    needs_display_rect: Option<CGRect>,
+    /// The part being redrawn, while `drawLayer:inContext:` runs.
+    drawing_rect: CGRect,
     pub(super) needs_display_on_bounds_change: bool,
     /// `CGImageRef*`
     pub(super) contents: id,
@@ -128,6 +133,11 @@ pub const CLASSES: ClassExports = objc_classes! {
         background_color: None, // transparency
         corner_radius: 0.0,
         needs_display: false,
+        needs_display_rect: None,
+        drawing_rect: CGRect {
+            origin: CGPoint { x: 0.0, y: 0.0 },
+            size: CGSize { width: 0.0, height: 0.0 }
+        },
         needs_display_on_bounds_change: false,
         contents: nil,
         drawable_properties: nil,
@@ -403,7 +413,18 @@ pub const CLASSES: ClassExports = objc_classes! {
     env.objc.borrow::<CALayerHostObject>(this).needs_display
 }
 - (())setNeedsDisplay {
-    env.objc.borrow_mut::<CALayerHostObject>(this).needs_display = true;
+    let host_obj = env.objc.borrow_mut::<CALayerHostObject>(this);
+    host_obj.needs_display = true;
+    host_obj.needs_display_rect = None;
+}
+- (())setNeedsDisplayInRect:(CGRect)rect {
+    let host_obj = env.objc.borrow_mut::<CALayerHostObject>(this);
+    if !host_obj.needs_display {
+        host_obj.needs_display = true;
+        host_obj.needs_display_rect = Some(rect);
+    } else if let Some(dirty) = host_obj.needs_display_rect {
+        host_obj.needs_display_rect = Some(union_rect(dirty, rect));
+    }
 }
 
 - (bool)needsDisplayOnBoundsChange {
@@ -413,7 +434,6 @@ pub const CLASSES: ClassExports = objc_classes! {
     env.objc.borrow_mut::<CALayerHostObject>(this).needs_display_on_bounds_change = value;
 }
 
-// TODO: support setNeedsDisplayInRect:
 - (())displayIfNeeded {
     let &mut CALayerHostObject {
         ref mut needs_display,
@@ -443,8 +463,10 @@ pub const CLASSES: ClassExports = objc_classes! {
         cg_context,
         ref mut gles_texture_is_up_to_date,
         bounds: CGRect { origin, size },
+        ref mut needs_display_rect,
         ..
     } = env.objc.borrow_mut(this);
+    let dirty_rect = needs_display_rect.take();
 
     *gles_texture_is_up_to_date = false;
 
@@ -475,18 +497,30 @@ pub const CLASSES: ClassExports = objc_classes! {
             color_space,
             kCGImageByteOrder32Big | kCGImageAlphaPremultipliedLast
         );
+        crate::frameworks::core_graphics::cg_bitmap_context::mark_layer_backing(env, cg_context);
         env.objc.borrow_mut::<CALayerHostObject>(this).cg_context = Some(cg_context);
         cg_context
     } else {
         cg_context.unwrap()
     };
 
+    // Only the part asked for (setNeedsDisplayInRect:) is redrawn; the rest of
+    // the backing store keeps what was drawn before, as on iPhone OS. A new
+    // backing store is drawn whole.
+    let whole = CGRect { origin, size };
+    let drawing_rect = if need_new_context { whole } else { dirty_rect.unwrap_or(whole) };
+    env.objc.borrow_mut::<CALayerHostObject>(this).drawing_rect = drawing_rect;
+
     CGContextTranslateCTM(env, cg_context, -origin.x, -origin.y);
-    // TODO: move clearing to UIKit (clearsContextBeforeDrawing)?
-    CGContextClearRect(env, cg_context, CGRect { origin, size });
-    crate::frameworks::core_graphics::cg_bitmap_context::reset_raw_access(env, cg_context);
+    // A UIView clears the rect itself, if its clearsContextBeforeDrawing says
+    // so (see UIView's drawLayer:inContext:).
+    let ui_view_class = env.objc.get_known_class("UIView", &mut env.mem);
+    let delegate_is_view: bool = msg![env; delegate isKindOfClass:ui_view_class];
+    if !delegate_is_view {
+        CGContextClearRect(env, cg_context, drawing_rect);
+    }
     () = msg![env; delegate drawLayer:this inContext:cg_context];
-    crate::frameworks::core_graphics::cg_bitmap_context::convert_pixels_if_raw_access(env, cg_context);
+    crate::frameworks::core_graphics::cg_bitmap_context::end_layer_draw(env, cg_context);
     CGContextTranslateCTM(env, cg_context, origin.x, origin.y);
 }
 
@@ -713,4 +747,25 @@ fn is_implicit_animation_enabled(env: &mut Environment, layer: id) -> bool {
     let uiview_class = env.objc.get_known_class("UIView", &mut env.mem);
     let delegate_is_uiview: bool = msg![env; delegate isKindOfClass:uiview_class];
     !delegate_is_uiview || env.framework_state.uikit.ui_view.animation_block_count > 0
+}
+
+/// The smallest rect containing both.
+fn union_rect(a: CGRect, b: CGRect) -> CGRect {
+    let min_x = a.origin.x.min(b.origin.x);
+    let min_y = a.origin.y.min(b.origin.y);
+    let max_x = (a.origin.x + a.size.width).max(b.origin.x + b.size.width);
+    let max_y = (a.origin.y + a.size.height).max(b.origin.y + b.size.height);
+    CGRect {
+        origin: CGPoint { x: min_x, y: min_y },
+        size: CGSize {
+            width: max_x - min_x,
+            height: max_y - min_y,
+        },
+    }
+}
+
+/// The part of the layer being redrawn, for `UIView`'s `drawLayer:inContext:`
+/// (in the layer's bounds' co-ordinates).
+pub fn drawing_rect(env: &Environment, layer: id) -> CGRect {
+    env.objc.borrow::<CALayerHostObject>(layer).drawing_rect
 }

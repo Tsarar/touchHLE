@@ -711,9 +711,11 @@ pub const CLASSES: ClassExports = objc_classes! {
     msg![env; layer setBackgroundColor:color]
 }
 
-// Redrawing only part of a view isn't supported: the whole view is redrawn.
-- (())setNeedsDisplayInRect:(CGRect)_rect {
-    () = msg![env; this setNeedsDisplay];
+- (())setNeedsDisplayInRect:(CGRect)rect {
+    if view_overrides_drawing(env, this) {
+        let layer = env.objc.borrow::<UIViewHostObject>(this).layer;
+        () = msg![env; layer setNeedsDisplayInRect:rect];
+    }
 }
 - (())setNeedsDisplay {
     // UIView has a method called drawRect: that subclasses override if they
@@ -783,13 +785,17 @@ pub const CLASSES: ClassExports = objc_classes! {
 // CALayerDelegate implementation
 - (())drawLayer:(id)layer // CALayer*
       inContext:(CGContextRef)context {
-    let mut bounds: CGRect = msg![env; layer bounds];
-    bounds.origin = CGPoint { x: 0.0, y: 0.0 }; // FIXME: not tested
+    // Only the part being redrawn (setNeedsDisplayInRect:) is cleared and
+    // passed to drawRect:, as on iPhone OS.
+    let bounds: CGRect = msg![env; layer bounds];
+    let mut rect = crate::frameworks::core_animation::ca_layer::drawing_rect(env, layer);
+    rect.origin.x -= bounds.origin.x; // FIXME: not tested with a non-zero origin
+    rect.origin.y -= bounds.origin.y;
     if env.objc.borrow::<UIViewHostObject>(this).clears_context_before_drawing {
-        CGContextClearRect(env, context, bounds);
+        CGContextClearRect(env, context, rect);
     }
     UIGraphicsPushContext(env, context);
-    () = msg![env; this drawRect:bounds];
+    () = msg![env; this drawRect:rect];
     UIGraphicsPopContext(env);
 }
 

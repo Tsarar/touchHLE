@@ -37,8 +37,11 @@ pub(super) struct CGBitmapContextData {
     bytes_per_row: GuestUSize,
     color_space: &'static str,
     alpha_info: CGImageAlphaInfo,
-    /// Set when the app takes the raw pixel pointer (`CGBitmapContextGetData`).
-    /// See [flip_rows_if_raw_access].
+    /// A layer's backing store (see [mark_layer_backing]).
+    is_layer_backing: bool,
+    /// The app took the raw pixel pointer of this layer backing store during the
+    /// current drawing pass, so its pixels are in iPhone OS's layout until
+    /// [end_layer_draw]. See [convert_layer_layout].
     raw_data_accessed: bool,
 }
 
@@ -86,6 +89,7 @@ pub fn CGBitmapContextCreate(
             bytes_per_row,
             color_space,
             alpha_info: bitmap_info & kCGBitmapAlphaInfoMask,
+            is_layer_backing: false,
             raw_data_accessed: false,
         }),
         // TODO: is this the correct default?
@@ -107,15 +111,36 @@ pub fn CGBitmapContextCreate(
 fn CGBitmapContextGetData(env: &mut Environment, context: CGContextRef) -> MutVoidPtr {
     let host_obj = env.objc.borrow_mut::<CGContextHostObject>(context);
     let CGContextSubclass::CGBitmapContext(ref mut bitmap_data) = host_obj.subclass;
-    bitmap_data.raw_data_accessed = true;
-    bitmap_data.data
+    let convert = bitmap_data.is_layer_backing && !bitmap_data.raw_data_accessed;
+    if convert {
+        bitmap_data.raw_data_accessed = true;
+    }
+    let data = *bitmap_data;
+    if convert {
+        // The app is about to read or write the pixels itself, expecting
+        // iPhone OS's layout: hand it the buffer in that layout.
+        convert_layer_layout(&data, &mut env.mem);
+    }
+    data.data
 }
 
-/// Forget whether the app took the raw pixel pointer (before drawing a layer).
-pub fn reset_raw_access(env: &mut Environment, context: CGContextRef) {
+/// Marks a bitmap context as a layer's backing store (by `CALayer`).
+pub fn mark_layer_backing(env: &mut Environment, context: CGContextRef) {
     let host_obj = env.objc.borrow_mut::<CGContextHostObject>(context);
     let CGContextSubclass::CGBitmapContext(ref mut bitmap_data) = host_obj.subclass;
-    bitmap_data.raw_data_accessed = false;
+    bitmap_data.is_layer_backing = true;
+}
+
+/// Ends a drawing pass into a layer's backing store: if the app took the raw
+/// pixel pointer during it, puts the pixels back into touchHLE's layout.
+pub fn end_layer_draw(env: &mut Environment, context: CGContextRef) {
+    let host_obj = env.objc.borrow_mut::<CGContextHostObject>(context);
+    let CGContextSubclass::CGBitmapContext(ref mut bitmap_data) = host_obj.subclass;
+    if !std::mem::take(&mut bitmap_data.raw_data_accessed) {
+        return;
+    }
+    let data = *bitmap_data;
+    convert_layer_layout(&data, &mut env.mem);
 }
 
 /// A layer's backing context here is RGBA with its rows bottom-to-top (the
@@ -125,16 +150,14 @@ pub fn reset_raw_access(env: &mut Environment, context: CGContextRef) {
 /// from `CGBitmapContextGetData` (Reign of Swords copies its whole frame that way
 /// in drawRect:) writes that layout, and here it comes out upside down with red
 /// and blue swapped. After such a drawing pass, convert the pixels into the
-/// layout the compositor expects.
-pub fn convert_pixels_if_raw_access(env: &mut Environment, context: CGContextRef) {
-    let host_obj = env.objc.borrow_mut::<CGContextHostObject>(context);
-    let CGContextSubclass::CGBitmapContext(ref mut bitmap_data) = host_obj.subclass;
-    if !std::mem::take(&mut bitmap_data.raw_data_accessed) {
-        return;
-    }
-    let data = *bitmap_data;
+/// layout the compositor expects. The conversion is its own inverse: it is done
+/// when the app takes the pointer and undone when the drawing pass ends, so the
+/// pixels the app left in earlier passes are still there in the layout it
+/// expects (an app that redraws only part of its view relies on that).
+fn convert_layer_layout(data: &CGBitmapContextData, mem: &mut Mem) {
+    let data = *data;
     let row = data.bytes_per_row as usize;
-    let pixels = get_pixels(&data, &mut env.mem);
+    let pixels = get_pixels(&data, mem);
     let rows = pixels.len() / row;
     for y in 0..rows / 2 {
         let (top, bottom) = pixels.split_at_mut((rows - 1 - y) * row);
